@@ -5,92 +5,49 @@ import {
   decorateIcons,
   decorateSections,
   loadBlock,
-  loadScript,
-  loadSections,
-} from './aem.js';
+  loadBlocks,
+  getMetadata,
+} from './lib-franklin.js';
 import { decorateRichtext } from './editor-support-rte.js';
+import renderSEOWarnings from './editor-support-seo.js';
 import { decorateMain } from './scripts.js';
 
-async function applyChanges(event) {
-  // redecorate default content and blocks on patches (in the properties rail)
-  const { detail } = event;
+// set aem content root
+window.hlx.aemRoot = '/content/exlm/global';
 
-  const resource = detail?.request?.target?.resource // update, patch components
-    || detail?.request?.target?.container?.resource // update, patch, add to sections
-    || detail?.request?.to?.container?.resource; // move in sections
-  if (!resource) return false;
-  const updates = detail?.response?.updates;
-  if (!updates.length) return false;
-  const { content } = updates[0];
-  if (!content) return false;
-
-  // load dompurify
-  await loadScript(`${window.hlx.codeBasePath}/scripts/dompurify.min.js`);
-
-  const sanitizedContent = window.DOMPurify.sanitize(content, { USE_PROFILES: { html: true } });
-  const parsedUpdate = new DOMParser().parseFromString(sanitizedContent, 'text/html');
-  const element = document.querySelector(`[data-aue-resource="${resource}"]`);
-
-  if (element) {
-    if (element.matches('main')) {
-      const newMain = parsedUpdate.querySelector(`[data-aue-resource="${resource}"]`);
-      newMain.style.display = 'none';
-      element.insertAdjacentElement('afterend', newMain);
-      decorateMain(newMain);
-      decorateRichtext(newMain);
-      await loadSections(newMain);
-      element.remove();
-      newMain.style.display = null;
-      // eslint-disable-next-line no-use-before-define
-      attachEventListners(newMain);
-      return true;
-    }
-
-    const block = element.parentElement?.closest('.block[data-aue-resource]') || element?.closest('.block[data-aue-resource]');
-    if (block) {
-      const blockResource = block.getAttribute('data-aue-resource');
-      const newBlock = parsedUpdate.querySelector(`[data-aue-resource="${blockResource}"]`);
-      if (newBlock) {
-        newBlock.style.display = 'none';
-        block.insertAdjacentElement('afterend', newBlock);
-        decorateButtons(newBlock);
-        decorateIcons(newBlock);
-        decorateBlock(newBlock);
-        decorateRichtext(newBlock);
-        await loadBlock(newBlock);
-        block.remove();
-        newBlock.style.display = null;
-        return true;
-      }
-    } else {
-      // sections and default content, may be multiple in the case of richtext
-      const newElements = parsedUpdate.querySelectorAll(`[data-aue-resource="${resource}"],[data-richtext-resource="${resource}"]`);
-      if (newElements.length) {
-        const { parentElement } = element;
-        if (element.matches('.section')) {
-          const [newSection] = newElements;
-          newSection.style.display = 'none';
-          element.insertAdjacentElement('afterend', newSection);
-          decorateButtons(newSection);
-          decorateIcons(newSection);
-          decorateRichtext(newSection);
-          decorateSections(parentElement);
-          decorateBlocks(parentElement);
-          await loadSections(parentElement);
-          element.remove();
-          newSection.style.display = null;
-        } else {
-          element.replaceWith(...newElements);
-          decorateButtons(parentElement);
-          decorateIcons(parentElement);
-          decorateRichtext(parentElement);
-        }
-        return true;
-      }
-    }
+// extract the visual state so we can restore it after applying updates
+function getState(block) {
+  const state = {};
+  if (block.matches('.tabs')) state.activeTabId = block.querySelector('[aria-selected="true"]').dataset.tabId;
+  if (block.matches('.carousel')) {
+    const container = block.querySelector('.panel-container');
+    state.scrollLeft = container.scrollLeft;
   }
+  return state;
+}
 
-  return false;
+function restoreState(newBlock, state) {
+  if (state.activeTabId) {
+    newBlock.querySelector(`[data-tab-id="${state.activeTabId}"]`).click();
+  }
+  if (state.scrollLeft) {
+    newBlock.querySelector('.panel-container').scrollTo({ left: state.scrollLeft, behavior: 'instant' });
+  }
+}
+
+function setIdsforRTETitles(articleContentSection) {
+  // find all titles with no id in the article content section
+  articleContentSection
+    .querySelectorAll('h1:not([id]),h2:not([id]),h3:not([id]),h4:not([id]),h5:not([id]),h6:not([id])')
+    .forEach((title) => {
+      title.id = title.textContent
+        .toLowerCase()
+        .trim()
+        .replaceAll('[^a-z0-9-]', '-')
+        .replaceAll('-{2,}', '-')
+        .replaceAll('^-+', '')
+        .replaceAll('-+$', '');
+    });
 }
 
 // set the filter for an UE editable
@@ -98,8 +55,13 @@ function setUEFilter(element, filter) {
   element.dataset.aueFilter = filter;
 }
 
+/**
+ * See:
+ * https://experienceleague.adobe.com/en/docs/experience-manager-cloud-service/content/implementing/developing/universal-editor/attributes-types#data-properties
+ */
 function updateUEInstrumentation() {
   const main = document.querySelector('main');
+
   // ----- if browse page, identified by theme
   if (document.querySelector('body[class^=browse-]')) {
     // if there is already a editable browse rail on the page
@@ -133,6 +95,12 @@ function updateUEInstrumentation() {
   if (document.querySelector('body[class^=articles]')) {
     // update available sections
     setUEFilter(main, 'main-article');
+    // update available blocks for article content sections
+    const articleContentSection = main.querySelector('.article-content-section');
+    if (articleContentSection) {
+      setUEFilter(articleContentSection, 'article-content-section');
+      setIdsforRTETitles(articleContentSection);
+    }
     // Update available blocks for tab sections
     const tabSections = main.querySelectorAll('div[data-aue-model^="tab-section"]');
     if (tabSections) {
@@ -169,6 +137,30 @@ function updateUEInstrumentation() {
     }
   }
 
+  // ----- if header, identified by theme
+  if (document.querySelector('body[class^=header]') || getMetadata('theme') === 'header') {
+    // update available sections
+    setUEFilter(main, 'empty');
+    // update the only available default section
+    const section = main.querySelector('.section');
+    setUEFilter(section, 'section-header');
+  }
+
+  // ----- if footer, identified by theme
+  if (document.querySelector('body[class^=footer]') || getMetadata('theme') === 'footer') {
+    // update available sections
+    setUEFilter(main, 'empty');
+    // update the only available default section
+    const section = main.querySelector('.section');
+    setUEFilter(section, 'section-footer');
+  }
+
+  // ----- if profile pages, identified by theme
+  if (document.querySelector('body[class^=profile]') || getMetadata('theme') === 'profile') {
+    // update available sections
+    setUEFilter(main, 'main-profile');
+  }
+
   // ----- if signup-flow-modal pages, identified by theme
   if (document.querySelector('body[class^=signup]')) {
     // update available sections
@@ -177,34 +169,198 @@ function updateUEInstrumentation() {
       setUEFilter(elem, 'sign-up-flow-section');
     });
   }
+
+  // ----- if learning-collections page, identified by theme
+  if (document.querySelector('body[class^=learning-collections]') || getMetadata('theme') === 'learning-collections') {
+    // update available sections
+    setUEFilter(main, 'main-learning-collections');
+  }
 }
 
-function attachEventListners(main) {
-  [
-    'aue:content-patch',
-    'aue:content-update',
-    'aue:content-add',
-    'aue:content-move',
-    'aue:content-remove',
-    'aue:content-copy',
-  ].forEach((eventType) => main?.addEventListener(eventType, async (event) => {
-    event.stopPropagation();
-    const applied = await applyChanges(event);
-    if (applied) {
-      updateUEInstrumentation();
-    } else {
-      window.location.reload();
+/**
+ * Event listener for aue:content-patch, edit of a component
+ */
+
+async function applyChanges(event) {
+  // redecorate default content and blocks on patches (in the properties rail)
+  const { detail } = event;
+
+  const resource = detail?.request?.target?.resource
+    || detail?.request?.target?.container?.resource
+    || detail?.request?.to?.container?.resource;
+  if (!resource) return false;
+  const updates = detail?.response?.updates;
+  if (!updates.length) return false;
+  const { content } = updates[0];
+  if (!content) return false;
+
+  const parsedUpdate = new DOMParser().parseFromString(content, 'text/html');
+  const element = document.querySelector(`[data-aue-resource="${resource}"]`);
+
+  if (element) {
+    if (element.matches('main')) {
+      const newMain = parsedUpdate.querySelector(`[data-aue-resource="${resource}"]`);
+      newMain.style.display = 'none';
+      element.insertAdjacentElement('afterend', newMain);
+      decorateMain(newMain);
+      decorateRichtext(newMain);
+      await loadBlocks(newMain);
+      element.remove();
+      // loadArticles();
+      newMain.style.display = null;
+      // eslint-disable-next-line no-use-before-define
+      attachEventListeners(newMain);
+      return true;
     }
-  }));
+
+    const block = element.parentElement?.closest('.block[data-aue-resource]')
+      || element?.closest('.block[data-aue-resource]');
+    if (block) {
+      const state = getState(block);
+      const blockResource = block.getAttribute('data-aue-resource');
+      const newBlock = parsedUpdate.querySelector(`[data-aue-resource="${blockResource}"]`);
+      if (newBlock) {
+        newBlock.style.display = 'none';
+        block.insertAdjacentElement('afterend', newBlock);
+        decorateButtons(newBlock);
+        decorateIcons(newBlock);
+        decorateBlock(newBlock);
+        decorateRichtext(newBlock);
+        await loadBlock(newBlock);
+        block.remove();
+        newBlock.style.display = null;
+        restoreState(newBlock, state);
+        return true;
+      }
+    } else {
+      // sections and default content, may be multiple in the case of richtext
+      const newElements = parsedUpdate.querySelectorAll(
+        `[data-aue-resource="${resource}"],[data-richtext-resource="${resource}"]`,
+      );
+      if (newElements.length) {
+        const { parentElement } = element;
+        if (element.matches('.tabpanel')) {
+          const [newSection] = newElements;
+          element.style.display = 'none';
+          element.insertAdjacentElement('afterend', newSection);
+          newSection.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach((heading) => {
+            heading.classList.add('no-mtoc');
+          });
+          decorateButtons(newSection);
+          decorateIcons(newSection);
+          decorateSections(parentElement);
+          decorateBlocks(parentElement);
+          decorateRichtext(newSection);
+          await loadBlocks(parentElement);
+          element.innerHTML = newSection.innerHTML;
+          newSection.remove();
+          element.style.display = null;
+          return true;
+        }
+        if (element.matches('.section')) {
+          let articleContentContainer;
+          const [newSection] = newElements;
+          newSection.style.display = 'none';
+          element.insertAdjacentElement('afterend', newSection);
+          decorateButtons(newSection);
+          decorateIcons(newSection);
+          if (document.querySelector('.article-content-container')) {
+            articleContentContainer = document.querySelector('.article-content-container').cloneNode(true);
+          }
+          decorateSections(parentElement);
+          decorateBlocks(parentElement);
+          decorateRichtext(newSection);
+          await loadBlocks(parentElement);
+          element.remove();
+          if (articleContentContainer) {
+            parentElement
+              .querySelector('.article-content-container')
+              .insertAdjacentElement('afterend', articleContentContainer);
+            parentElement.querySelector('.article-content-container').remove();
+          }
+          newSection.style.display = null;
+        } else {
+          element.replaceWith(...newElements);
+          if (element.closest('.tab-panel')) element.classList.add('no-mtoc');
+          decorateButtons(parentElement);
+          decorateIcons(parentElement);
+          decorateRichtext(parentElement);
+        }
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
-attachEventListners(document.querySelector('main'));
+/**
+ * Event listener for aue:ui-select, selection of a component
+ */
+async function handleEditorSelect(event) {
+  // we are only interested in the target
+  if (!event.detail.selected) {
+    return;
+  }
 
-// decorate rich text
-// this has to happen after decorateMain(), and everythime decorateBlocks() is called
-decorateRichtext();
-// in cases where the block decoration is not done in one synchronous iteration we need to listen
-// for new richtext-instrumented elements. this happens for example when using experimentation.
-const observer = new MutationObserver(() => decorateRichtext());
-observer.observe(document, { attributeFilter: ['data-richtext-prop'], subtree: true });
+  // handle flip card selection
+  const { handleFlipCardSelection } = await import('./editor-support-blocks.js');
+  handleFlipCardSelection(event);
+
+  // if a tab panel was selected
+  if (event.target.closest('.tabpanel')) {
+    // switch to the selected tab
+    const tabItem = event.target.closest('.tabpanel');
+    // get the corresponding tabs button
+    const buttonId = tabItem.getAttribute('aria-labelledby');
+    const button = tabItem.closest('.tabs.block').querySelector(`button[id="${buttonId}"]`);
+    // click it
+    button.click();
+  }
+
+  // if a teaser in a carousel was selected
+  if (event.target.closest('.panel-container')) {
+    // switch to the selected carousel slide
+    const carouselItem = event.target;
+    carouselItem.parentElement.scrollTo({
+      top: 0,
+      left: carouselItem.offsetLeft - carouselItem.parentNode.offsetLeft,
+      behavior: 'instant',
+    });
+  }
+}
+
+function attachEventListeners(main) {
+  ['aue:content-patch', 'aue:content-update', 'aue:content-add', 'aue:content-move', 'aue:content-remove'].forEach(
+    (eventType) => main?.addEventListener(eventType, async (event) => {
+      event.stopPropagation();
+      const applied = await applyChanges(event);
+      if (applied) {
+        updateUEInstrumentation();
+        renderSEOWarnings();
+        if (main.querySelectorAll('.block.code').length > 0) {
+          const { highlightCodeBlock } = await import('./editor-support-blocks.js');
+          const updatedEl = event.detail?.element ?? main;
+          await highlightCodeBlock(updatedEl);
+        }
+      } else {
+        window.location.reload();
+      }
+    }),
+  );
+
+  main.addEventListener('aue:ui-select', handleEditorSelect);
+}
+
+attachEventListeners(document.querySelector('main'));
+
+// temporary workaround until aue:ui-edit and aue:ui-preview events become available
+// show/hide sign-up block when switching betweeen UE Edit mode and preview
+const signUpBlock = document.querySelector('.block.sign-up');
+if (signUpBlock) {
+  const { handleSignUpBlock } = await import('./editor-support-blocks.js');
+  await handleSignUpBlock(signUpBlock);
+}
+
+// update UE component filters on page load
 updateUEInstrumentation();
