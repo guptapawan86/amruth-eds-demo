@@ -93,6 +93,11 @@ async function applyChanges(event) {
   return false;
 }
 
+// set the filter for an UE editable
+function setUEFilter(element, filter) {
+  element.dataset.aueFilter = filter;
+}
+
 
 function updateUEInstrumentation() {
 debugger;
