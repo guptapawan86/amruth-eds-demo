@@ -98,12 +98,8 @@ function setUEFilter(element, filter) {
   element.dataset.aueFilter = filter;
 }
 
-
 function updateUEInstrumentation() {
-debugger;
-console.log("hello");
   const main = document.querySelector('main');
-
   // ----- if browse page, identified by theme
   if (document.querySelector('body[class^=browse-]')) {
     // if there is already a editable browse rail on the page
@@ -137,12 +133,6 @@ console.log("hello");
   if (document.querySelector('body[class^=articles]')) {
     // update available sections
     setUEFilter(main, 'main-article');
-    // update available blocks for article content sections
-    const articleContentSection = main.querySelector('.article-content-section');
-    if (articleContentSection) {
-      setUEFilter(articleContentSection, 'article-content-section');
-      setIdsforRTETitles(articleContentSection);
-    }
     // Update available blocks for tab sections
     const tabSections = main.querySelectorAll('div[data-aue-model^="tab-section"]');
     if (tabSections) {
@@ -151,7 +141,6 @@ console.log("hello");
       });
     }
 
-    // Update available blocks for default sections excluding article-header-section, article-content-section and tab-section
     main
       .querySelectorAll(
         '.section:not(.article-content-section):not(.article-header-section):not([data-aue-model^="tab-section"])',
@@ -180,30 +169,6 @@ console.log("hello");
     }
   }
 
-  // ----- if header, identified by theme
-  if (document.querySelector('body[class^=header]') || getMetadata('theme') === 'header') {
-    // update available sections
-    setUEFilter(main, 'empty');
-    // update the only available default section
-    const section = main.querySelector('.section');
-    setUEFilter(section, 'section-header');
-  }
-
-  // ----- if footer, identified by theme
-  if (document.querySelector('body[class^=footer]') || getMetadata('theme') === 'footer') {
-    // update available sections
-    setUEFilter(main, 'empty');
-    // update the only available default section
-    const section = main.querySelector('.section');
-    setUEFilter(section, 'section-footer');
-  }
-
-  // ----- if profile pages, identified by theme
-  if (document.querySelector('body[class^=profile]') || getMetadata('theme') === 'profile') {
-    // update available sections
-    setUEFilter(main, 'main-profile');
-  }
-
   // ----- if signup-flow-modal pages, identified by theme
   if (document.querySelector('body[class^=signup]')) {
     // update available sections
@@ -212,36 +177,25 @@ console.log("hello");
       setUEFilter(elem, 'sign-up-flow-section');
     });
   }
-
-  // ----- if learning-collections page, identified by theme
-  if (document.querySelector('body[class^=learning-collections]') || getMetadata('theme') === 'learning-collections') {
-    // update available sections
-    setUEFilter(main, 'main-learning-collections');
-  }
 }
 
-function attachEventListeners(main) {
-debugger;
-  ['aue:content-patch', 'aue:content-update', 'aue:content-add', 'aue:content-move', 'aue:content-remove'].forEach(
-    (eventType) =>
-      main?.addEventListener(eventType, async (event) => {
-        event.stopPropagation();
-        const applied = await applyChanges(event);
-        if (applied) {
-          updateUEInstrumentation();
-          renderSEOWarnings();
-          if (main.querySelectorAll('.block.code').length > 0) {
-            const { highlightCodeBlock } = await import('./editor-support-blocks.js');
-            const updatedEl = event.detail?.element ?? main;
-            await highlightCodeBlock(updatedEl);
-          }
-        } else {
-          window.location.reload();
-        }
-      }),
-  );
-
-  main.addEventListener('aue:ui-select', handleEditorSelect);
+function attachEventListners(main) {
+  [
+    'aue:content-patch',
+    'aue:content-update',
+    'aue:content-add',
+    'aue:content-move',
+    'aue:content-remove',
+    'aue:content-copy',
+  ].forEach((eventType) => main?.addEventListener(eventType, async (event) => {
+    event.stopPropagation();
+    const applied = await applyChanges(event);
+    if (applied) {
+      updateUEInstrumentation();
+    } else {
+      window.location.reload();
+    }
+  }));
 }
 
 attachEventListners(document.querySelector('main'));
