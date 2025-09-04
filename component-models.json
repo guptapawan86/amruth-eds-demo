@@ -255,7 +255,7 @@
         "label": "experience-fragment",
         "variationName": "experienceFragmentVariation",
         "validation": {
-          "rootPath": "/content/refresh"
+          "rootPath": "/content/"
         }
       }
     ]
