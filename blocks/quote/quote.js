@@ -1,4 +1,4 @@
-export default function decorate(block) {
+export default async function decorate(block) {
   const [quoteWrapper] = block.children;
 
   const blockquote = document.createElement('blockquote');
