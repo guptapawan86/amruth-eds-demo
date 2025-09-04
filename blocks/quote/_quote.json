@@ -46,7 +46,17 @@
                 { "name": "Option 1", "value": "option1" },
                 { "name": "Option 2", "value": "option2" }
               ]
-            }
+            },
+        {
+          "component": "aem-experience-fragment",
+          "valueType": "string",
+          "name": "experience-fragment",
+          "label": "experience-fragment",
+          "variationName": "experienceFragmentVariation",
+          "validation": {
+            "rootPath": "/content/refresh"
+          }
+        }
       ]
     }
 
