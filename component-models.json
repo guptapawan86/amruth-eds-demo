@@ -255,7 +255,7 @@
         "label": "experience-fragment",
         "variationName": "experienceFragmentVariation",
         "validation": {
-          "rootPath": "/content/"
+          "rootPath": "/content/experience-fragments/"
         }
       }
     ]
