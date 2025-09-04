@@ -222,7 +222,7 @@
         "component": "richtext",
         "name": "quote",
         "value": "",
-        "label": "Quote",
+        "label": "Quote Label",
         "valueType": "string"
       },
       {
